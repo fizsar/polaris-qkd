@@ -2,6 +2,10 @@
 
 Español · [English](README.md)
 
+### ▶ [Demo en vivo: polaris.fizsar.com](https://polaris.fizsar.com)
+
+Se ejecuta entera en tu navegador (la librería en Go compilada a WebAssembly). Solo simulación.
+
 > **⚠️ Esto es una SIMULACIÓN.** No hay hardware cuántico: los fotones son
 > variables aleatorias en un modelo de software. Polaris **no** es distribución
 > cuántica de claves real, sus claves **no** sirven para uso real y nunca debe

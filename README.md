@@ -2,6 +2,10 @@
 
 [Español](README.es.md) · English
 
+### ▶ [Live demo: polaris.fizsar.com](https://polaris.fizsar.com)
+
+Runs entirely in your browser (the Go library compiled to WebAssembly). Simulation only.
+
 > **⚠️ This is a SIMULATION.** There is no quantum hardware here: photons are
 > random variables in a software model. Polaris is **not** real quantum key
 > distribution, its output keys are **not** for real use, and it must never be
