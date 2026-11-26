@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Polaris — QKD simulator (BB84)</title>
+  <meta name="description" content="Polaris: a BB84 quantum key distribution simulator that runs in your browser. Simulation only, not real QKD.">
+  <meta name="theme-color" content="#05060b">
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="./fonts/jetbrains-mono-latin-wght.woff2" as="font" type="font/woff2" crossorigin>
+  <script type="module" src="./src/main.js"></script>
+</head>
+<body>
+  <canvas id="sky" aria-hidden="true"></canvas>
+
+  <header class="top">
+    <a class="brand" href="https://fizsar.com" rel="noopener"><span class="dim">~/</span>fizsar <span class="dim">/</span> <span class="star">✦</span> polaris</a>
+    <nav aria-label="main">
+      <a href="#sim" data-i18n="nav.sim">simulator</a>
+      <a href="#charts" data-i18n="nav.charts">charts</a>
+      <a href="#about" data-i18n="nav.about">about</a>
+      <span class="lang" role="group" aria-label="language">
+        <button type="button" data-lang="es" aria-pressed="false">ES</button><span class="dim">/</span><button type="button" data-lang="en" aria-pressed="true">EN</button>
+      </span>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <p class="prompt"><span class="dim">$</span> polaris <span class="dim">--protocol</span> bb84<span class="cursor" aria-hidden="true">▌</span></p>
+      <h1>Polaris</h1>
+      <p class="sub" data-i18n="hero.sub">Quantum key distribution simulator (BB84)</p>
+      <div class="warn" role="note">
+        <strong data-i18n="hero.warn.title">This is a simulation</strong>
+        <span data-i18n="hero.warn.body"></span>
+      </div>
+      <a class="btn ghost" href="#sim" data-i18n="hero.cta">Try the simulator</a>
+    </section>
+
+    <section id="sim" class="panel">
+      <h2><span class="dim">##</span> <span data-i18n="sim.h">Simulator</span></h2>
+      <p class="lede" data-i18n="sim.intro"></p>
+
+      <div class="sim-grid">
+        <form id="controls" class="controls" autocomplete="off">
+          <label class="ctl"><span class="k" data-i18n="ctl.distance">distance</span>
+            <output id="o-distance">25 km</output>
+            <input id="in-distance" type="range" min="0" max="150" step="1" value="25"></label>
+          <label class="ctl"><span class="k" data-i18n="ctl.noise">noise</span>
+            <output id="o-noise">2.0 %</output>
+            <input id="in-noise" type="range" min="0" max="10" step="0.1" value="2"></label>
+          <label class="ctl eve"><span class="k" data-i18n="ctl.eve">Eve intercepts</span>
+            <output id="o-eve">0 %</output>
+            <input id="in-eve" type="range" min="0" max="100" step="1" value="0"></label>
+          <label class="ctl"><span class="k" data-i18n="ctl.photons">photons</span>
+            <output id="o-photons">100 000</output>
+            <input id="in-photons" type="range" min="4" max="6" step="0.25" value="5"></label>
+          <button id="run" class="btn" type="submit" data-i18n="ctl.run">Simulate</button>
+          <p class="fixed" data-i18n="ctl.fixed"></p>
+        </form>
+
+        <div class="results" aria-live="polite">
+          <h3 data-i18n="res.h">Result</h3>
+          <div id="verdict" class="verdict" hidden></div>
+          <dl id="stats" class="stats"></dl>
+        </div>
+      </div>
+    </section>
+
+    <section id="anim" class="panel">
+      <h2><span class="dim">##</span> <span data-i18n="anim.h">The first 100 photons</span></h2>
+      <p class="lede" data-i18n="anim.intro"></p>
+      <div class="stage">
+        <canvas id="stage" width="1000" height="300"></canvas>
+        <div class="stage-bar">
+          <span id="anim-stats" class="dim"></span>
+          <label class="check"><input id="show-lost" type="checkbox"> <span data-i18n="anim.showLost">also show photons lost in the fibre</span></label>
+          <button id="replay" class="btn small ghost" type="button" data-i18n="anim.replay">↻ replay</button>
+        </div>
+        <p id="anim-note" class="fixed" hidden></p>
+        <ul class="legend">
+          <li><i class="sw photon"></i><span data-i18n="leg.photon">photon</span></li>
+          <li><i class="sw eve"></i><span data-i18n="leg.eve">Eve</span></li>
+          <li><i class="sw kept"></i><span data-i18n="leg.kept">bit kept</span></li>
+          <li><i class="sw err"></i><span data-i18n="leg.error">kept, with an error</span></li>
+          <li><i class="sw disc"></i><span data-i18n="leg.disc">different basis: discarded</span></li>
+          <li><i class="sw lost"></i><span data-i18n="leg.lost">lost in the fibre</span></li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="charts" class="panel">
+      <h2><span class="dim">##</span> <span data-i18n="ch.h">Charts</span></h2>
+      <p class="lede" data-i18n="ch.intro"></p>
+      <div class="charts">
+        <figure><div id="chart-rate" class="chart"></div></figure>
+        <figure><div id="chart-qber" class="chart"></div></figure>
+      </div>
+    </section>
+
+    <section id="about" class="panel about">
+      <h2><span class="dim">##</span> <span data-i18n="about.h">What is this</span></h2>
+      <div class="cols">
+        <div>
+          <h3 data-i18n="about.qkd.h">What QKD is</h3>
+          <p data-i18n="about.qkd.p"></p>
+          <h3 data-i18n="about.lim.h">Simulator limits</h3>
+          <ul>
+            <li data-i18n="about.lim.1"></li><li data-i18n="about.lim.2"></li>
+            <li data-i18n="about.lim.3"></li><li data-i18n="about.lim.4"></li>
+          </ul>
+        </div>
+        <div>
+          <h3 data-i18n="about.bb84.h">How BB84 works</h3>
+          <ol>
+            <li data-i18n-html="about.bb84.1"></li><li data-i18n-html="about.bb84.2"></li>
+            <li data-i18n-html="about.bb84.3"></li><li data-i18n-html="about.bb84.4"></li>
+            <li data-i18n-html="about.bb84.5"></li>
+          </ol>
+        </div>
+      </div>
+      <p class="repo"><span class="dim">→</span> <span data-i18n="about.repo">Code and details in the repository</span>:
+        <a href="https://github.com/fizsar/polaris-qkd" rel="noopener">github.com/fizsar/polaris-qkd</a></p>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <a class="logo" href="https://fizsar.com" rel="noopener" aria-label="fizsar"><img src="./img/fs-symbol.svg" alt="FS" width="44" height="39"></a>
+    <span class="dim" data-i18n="foot.lic">AGPL-3.0-only · simulation, not real QKD</span>
+  </footer>
+</body>
+</html>

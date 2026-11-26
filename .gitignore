@@ -2,3 +2,7 @@
 /bin/
 *.test
 *.out
+/web/node_modules/
+/web/dist/
+/web/public/polaris.wasm
+/web/public/wasm_exec.js

@@ -36,3 +36,54 @@ jobs:
 
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
+
+  # The web app: WebAssembly build with TinyGo, Node tests of the .wasm, and
+  # the production build of the static site.
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # TinyGo is pinned by version AND by the SHA-256 of the release tarball.
+      TINYGO_VERSION: "0.44.0"
+      TINYGO_SHA256: ed0f45543a49ff2a99120a5a1b8814a0750e1fda1a66f8e2a0a172576134aaf9
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # TinyGo only supports certain Go versions; this is the one it was tested with.
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: "1.27.1"
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install TinyGo
+        run: |
+          url="https://github.com/tinygo-org/tinygo/releases/download/v${TINYGO_VERSION}/tinygo${TINYGO_VERSION}.linux-amd64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/tinygo.tar.gz" "$url"
+          echo "${TINYGO_SHA256}  $RUNNER_TEMP/tinygo.tar.gz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/tinygo-root"
+          tar -xzf "$RUNNER_TEMP/tinygo.tar.gz" -C "$RUNNER_TEMP/tinygo-root"
+          echo "$RUNNER_TEMP/tinygo-root/tinygo/bin" >> "$GITHUB_PATH"
+
+      - name: Build WebAssembly (TinyGo)
+        run: |
+          tinygo version
+          make wasm
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci --ignore-scripts
+
+      - name: Test the .wasm under Node
+        working-directory: web
+        run: npm test
+
+      - name: Build the static site
+        working-directory: web
+        run: npm run build
