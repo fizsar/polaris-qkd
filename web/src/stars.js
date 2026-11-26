@@ -46,37 +46,32 @@ export function startSky(canvas, reduced) {
       return arr
     })
 
-    // Constellations on the middle layer: greedy nearest-neighbour chains.
-    const stars = layers[1]
-    edges = []; nodes = new Set()
-    const used = new Set()
-    const dist = (a, b) => Math.hypot(a.dx - b.dx, a.dy - b.dy)
-    const chain = (startIdx, len) => {
-      let cur = startIdx
-      used.add(cur); nodes.add(cur)
-      for (let k = 0; k < len; k++) {
-        let best = -1, bd = 1e9
-        for (let j = 0; j < stars.length; j++) {
-          if (used.has(j)) continue
-          const d = dist(stars[cur], stars[j])
-          if (d > 55 && d < 240 && d < bd) { bd = d; best = j }
-        }
-        if (best < 0) break
-        edges.push(trace(stars[cur], stars[best]))
-        used.add(best); nodes.add(best)
-        cur = best
+    // Ursa Minor (the Little Dipper) with its real sky positions: RA/Dec of the
+    // seven stars projected around the celestial pole, Polaris at the end of the tail.
+    // Thin circuit-style traces join them; there are no other lines in the sky.
+    const UMI = [ // name, RA (deg), Dec (deg), magnitude
+      ['Polaris', 37.95, 89.26, 2.0], ['Yildun', 263.05, 86.59, 4.35], ['Epsilon', 251.5, 82.04, 4.2],
+      ['Zeta', 236.0, 77.79, 4.3], ['Eta', 244.4, 75.76, 5.0], ['Pherkad', 230.2, 71.83, 3.0], ['Kochab', 222.7, 74.16, 2.1],
+    ]
+    const LINKS = [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 3]] // tail, then the bowl
+    const scale = Math.min(16, Math.max(9, W * 0.0105)) // px per degree
+    const phi = 0.575 // rotate the chart so the Dipper hangs to the left of Polaris
+    const proj = ([, ra, dec]) => {
+      const r = 90 - dec, th = (ra * Math.PI) / 180
+      return [r * Math.cos(th), -r * Math.sin(th)] // north up, RA increasing counter-clockwise
+    }
+    const p0 = proj(UMI[0])
+    const uma = UMI.map((st, i) => {
+      const [x, y] = proj(st)
+      const ux = (x - p0[0]) * scale, uy = (y - p0[1]) * scale
+      return {
+        dx: ux * Math.cos(phi) - uy * Math.sin(phi), dy: ux * Math.sin(phi) + uy * Math.cos(phi),
+        size: 1.2 + (5.2 - st[3]) * 0.5, a: 1, ph: i * 1.3, sp: 0.35 + i * 0.07, cyan: i % 2 === 0,
       }
-    }
-    const polarisStar = { dx: 0, dy: 0 }
-    let first = -1, bd = 1e9
-    stars.forEach((st, j) => { const d = dist(polarisStar, st); if (d > 80 && d < bd) { bd = d; first = j } })
-    if (first >= 0) { edges.push(trace(polarisStar, stars[first])); chain(first, 5) }
-    const groups = Math.round(stars.length / 9)
-    for (let g = 0, tries = 0; g < groups && tries < 300; tries++) {
-      const i = Math.floor(rnd() * stars.length)
-      if (used.has(i)) continue
-      chain(i, 2 + Math.floor(rnd() * 4)); g++
-    }
+    })
+    edges = []; nodes = new Set()
+    for (const [i, j] of LINKS) edges.push(trace(uma[i], uma[j]))
+    for (let i = 1; i < uma.length; i++) { nodes.add(layers[1].length); layers[1].push(uma[i]) }
   }
 
   // A route from a to b: a straight run along the longer axis, then a 45° bend.
@@ -110,7 +105,7 @@ export function startSky(canvas, reduced) {
     {
       const [c, sn] = rot(1)
       ctx.lineWidth = 1; ctx.lineJoin = 'round'
-      ctx.strokeStyle = 'rgba(143,140,255,.26)'
+      ctx.strokeStyle = 'rgba(143,140,255,.38)'
       for (const e of edges) {
         ctx.beginPath()
         e.forEach(([dx, dy], i) => {
@@ -136,8 +131,8 @@ export function startSky(canvas, reduced) {
           ctx.beginPath(); ctx.arc(x, y, st.size * 3.2, 0, TAU); ctx.fill()
         }
         if (li === 1 && nodes.has(i)) {
-          ctx.strokeStyle = 'rgba(143,140,255,.4)'
-          ctx.beginPath(); ctx.arc(x, y, st.size + 2.6, 0, TAU); ctx.stroke()
+          ctx.strokeStyle = 'rgba(160,200,255,.55)'
+          ctx.beginPath(); ctx.arc(x, y, st.size + 3, 0, TAU); ctx.stroke()
         }
       }
     }

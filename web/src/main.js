@@ -2,12 +2,15 @@
 import './style.css'
 import { initLang, setLang, getLang, t } from './i18n.js'
 import { startSky } from './stars.js'
-import { createStage } from './anim.js'
+import { createEngine } from './engine.js'
+import { createHero } from './hero.js'
+import { createSiftTable } from './sifttable.js'
 import { renderChart, si } from './charts.js'
 
 const $ = (id) => document.getElementById(id)
 const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-
+const debounce = (fn, ms) => { let h; return (...a) => { clearTimeout(h); h = setTimeout(() => fn(...a), ms) } }
+const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))
 
 // ── workers ────────────────────────────────────────────────────────────────
 function makeWorker() {
@@ -48,58 +51,108 @@ function syncOutputs() {
   $('o-eve').textContent = `${Math.round(c.eve * 100)} %`
   $('o-photons').textContent = nf().format(c.photons)
 }
-for (const id of ['in-distance', 'in-noise', 'in-eve', 'in-photons']) $(id).addEventListener('input', syncOutputs)
 
-// ── results ────────────────────────────────────────────────────────────────
+// ── results: verdict, final key (count-up) and QBER gauge on top; the rest in "Details" ──
 let lastResult = null
 const pct = (v, d = 2) => `${(v * 100).toLocaleString(getLang(), { minimumFractionDigits: d, maximumFractionDigits: d })} %`
 const compact = (v) => new Intl.NumberFormat(getLang(), { notation: 'compact', maximumFractionDigits: 2 }).format(v)
 
-function renderResult(r) {
-  lastResult = r
-  const v = $('verdict')
-  v.hidden = false
-  v.className = 'verdict ' + (r.aborted ? 'bad' : 'ok')
-  if (r.aborted) {
-    const key = `abort.${r.abort_code}`
-    const text = t(key, { q: (r.qber * 100).toLocaleString(getLang(), { maximumFractionDigits: 1 }), n: r.sifted_bits, r: r.abort_reason })
-    v.innerHTML = `<b>✗ ${t('res.aborted')}</b>${esc(text.startsWith('abort.') ? t('abort.other', { r: r.abort_reason }) : text)}`
-  } else {
-    v.innerHTML = `<b>✓ ${t('res.ok')}</b>${esc(`${nf().format(r.final_key_bits)} ${t('res.bits')} · ${compact(r.key_rate_bits_per_s)} ${t('res.perSec')}`)}`
+let countRaf = 0
+function countUp(el, to) {
+  cancelAnimationFrame(countRaf)
+  const from = +(el.dataset.v || 0)
+  el.dataset.v = String(to)
+  if (reduced || from === to) { el.textContent = nf().format(to); return }
+  const t0 = performance.now(), dur = 700
+  const step = (now) => {
+    const k = Math.min(1, (now - t0) / dur), e = 1 - (1 - k) ** 3
+    el.textContent = nf().format(Math.round(from + (to - from) * e))
+    if (k < 1) countRaf = requestAnimationFrame(step)
   }
+  countRaf = requestAnimationFrame(step)
+}
+
+function abortText(r) {
+  const text = t(`abort.${r.abort_code}`, { q: (r.qber * 100).toLocaleString(getLang(), { maximumFractionDigits: 1 }), n: r.sifted_bits, r: r.abort_reason })
+  return text.startsWith('abort.') ? t('abort.other', { r: r.abort_reason }) : text
+}
+
+function renderResult(r, cfg = lastCfg) {
+  lastResult = r
+  const ok = !r.aborted
+  const highQber = r.abort_code === 'qber_too_high' || r.abort_code === 'no_secret_key'
+  // verdict: secure key (green) or key discarded (magenta)
+  $('v-card').className = 'card verdict-card ' + (ok ? 'ok' : 'bad')
+  $('v-title').textContent = ok ? t('v.ok')
+    : highQber ? t('v.qberTitle')
+    : r.abort_code === 'sifted_too_short' ? t('v.signalTitle') : t('v.diffTitle')
+  const vt = $('v-text')
+  vt.replaceChildren()
+  if (ok) vt.append(`${t('res.ok')} · ${nf().format(r.final_key_bits)} ${t('res.bits')}`)
+  else {
+    vt.append(highQber ? t('v.qberNote') : abortText(r))
+    if (highQber && cfg && cfg.eve > 0) {
+      const s = document.createElement('span')
+      s.className = 'eve-note'; s.textContent = ' ' + t('v.eveNote')
+      vt.append(s)
+    }
+  }
+  // final key
+  countUp($('k-num'), r.final_key_bits)
+  document.querySelector('.key-card').classList.toggle('dead', !ok)
+  $('k-rate').textContent = ok ? `${r.key_rate_per_pulse.toPrecision(3)} ${t('res.perPulse')} · ${compact(r.key_rate_bits_per_s)} ${t('res.perSec')}` : ''
+  // QBER gauge, scale 0–30 % with the 11 % line marked
+  const g = $('gauge')
+  if (r.sample_bits_spent) {
+    $('q-val').textContent = pct(r.qber)
+    g.style.setProperty('--w', '0%')
+    $('g-fill').style.setProperty('--w', `${Math.min(r.qber, 0.3) / 0.3 * 100}%`)
+    $('g-up').style.setProperty('--w', `${Math.min(r.qber_upper, 0.3) / 0.3 * 100}%`)
+    g.classList.toggle('bad', !ok)
+    $('q-sub').textContent = `${t('res.upper')} ${pct(r.qber_upper)} · ${r.sample_errors}/${nf().format(r.sample_bits_spent)}`
+  } else {
+    $('q-val').textContent = '—'
+    $('g-fill').style.setProperty('--w', '0%'); $('g-up').style.setProperty('--w', '0%')
+    $('q-sub').textContent = ''
+  }
+  // details
   const cells = [
     ['res.detected', `${nf().format(r.photons_detected)} <small>${t('res.of')} ${nf().format(r.photons_sent)}</small>`],
     ['res.sifted', `${nf().format(r.sifted_bits)} <small>${t('res.bits')} · ${pct(r.sift_ratio, 1)} ${t('res.pctOfDetected')}</small>`],
   ]
   if (r.sample_bits_spent) {
-    cells.push(['res.qber', `${pct(r.qber)} <small>${t('res.upper')} ${pct(r.qber_upper)}</small>`, r.aborted && r.abort_code === 'qber_too_high' ? 'warnv' : ''])
+    cells.push(['res.qber', `${pct(r.qber)} <small>${t('res.upper')} ${pct(r.qber_upper)}</small>`, !ok && highQber ? 'warnv' : ''])
     cells.push(['res.sample', `${nf().format(r.sample_bits_spent)} <small>${t('res.bits')}</small>`])
   }
   if (r.leak_ec) {
     cells.push(['res.leak', `${nf().format(r.leak_ec)} <small>${t('res.bits')}</small>`])
     cells.push(['res.verify', `${r.verify_bits} <small>${t('res.bits')}</small>`])
   }
-  cells.push(['res.final', `${nf().format(r.final_key_bits)} <small>${t('res.bits')}</small>`, r.aborted ? 'warnv' : 'key'])
-  if (!r.aborted) {
+  cells.push(['res.final', `${nf().format(r.final_key_bits)} <small>${t('res.bits')}</small>`, ok ? 'key' : 'warnv'])
+  if (ok) {
     cells.push(['res.rate', `${r.key_rate_per_pulse.toPrecision(3)} <small>${t('res.perPulse')}</small><br><small>${compact(r.key_rate_bits_per_s)} ${t('res.perSec')}</small>`])
     cells.push(['res.match', `<span class="${r.keys_match ? 't-green' : 't-eve'}">${t(r.keys_match ? 'res.same' : 'res.diff')}</span>`])
   }
   $('stats').innerHTML = cells.map(([k, val, cls]) => `<div class="stat ${cls || ''}"><dt>${t(k)}</dt><dd>${val}</dd></div>`).join('')
 }
-const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))
 
-// ── animation ──────────────────────────────────────────────────────────────
-let stage
-function animStats(c) {
-  $('anim-stats').textContent = t('anim.stats', { k: c.k, e: c.e, d: c.d, l: c.l })
-}
+// ── hero + sifting table, both fed by one engine ──────────────────────────
+let hero = null
+const table = createSiftTable($('sift-wrap'), $('sift-body'), reduced)
+const engine = createEngine(reduced, {
+  onLoad: (e) => { table.reset(e.photons.length, e.eveOn); $('sift-stats').textContent = '' },
+  onResolve: (i, p, first) => table.fill(i, p, first),
+  onStats: (c) => { $('sift-stats').textContent = t('anim.stats', c) },
+  onFrame: (e) => hero?.draw(e),
+})
+hero = createHero($('hero-canvas'), engine, reduced)
 
-let lastCfg = null
+let lastCfg = null, lastSeed = 0
 async function loadTrace() {
   if (!lastCfg) return
   const only = !$('show-lost').checked
-  const trace = await simWorker.call({ op: 'trace', cfg: { ...lastCfg, seed: 0, onlyDetected: only } })
-  stage.show(trace, lastCfg.eve)
+  const trace = await simWorker.call({ op: 'trace', cfg: { ...lastCfg, seed: lastSeed, onlyDetected: only } })
+  engine.load(trace, lastCfg.eve)
   renderNote()
 }
 function renderNote() {
@@ -116,20 +169,16 @@ const chartData = { rate: [], qber: [], cfg: null, working: { rate: false, qber:
 function drawCharts() {
   const c = chartData.cfg
   if (!c) return
-  const lang = getLang()
-  const yfmtRate = (v) => si(v)
-  // rate vs distance (+ fibre-loss reference anchored at the first non-zero point)
   const rate = chartData.rate.map((p) => [p.x, p.r.rateBps])
   const first = rate.find(([, y]) => y > 0)
   const lastX = rate.filter(([, y]) => y > 0).at(-1)?.[0]
   const ref = first ? rate.filter(([x]) => x <= lastX).map(([x]) => [x, first[1] * 10 ** (-0.2 * (x - first[0]) / 10)]) : []
   renderChart($('chart-rate'), {
-    title: t('ch.rate.t'), xLabel: t('ch.rate.x'), yLabel: t('ch.rate.y'), logY: true, yFmt: yfmtRate,
+    title: t('ch.rate.t'), xLabel: t('ch.rate.x'), yLabel: t('ch.rate.y'), logY: true, yFmt: si,
     xMin: 0, xMax: 150, cls: 'green',
     note: !rate.some(([, y]) => y > 0) ? (chartData.working.rate ? t('ch.working') : t('ch.nokey')) : '',
     series: [{ label: t('ch.sim'), role: 'data', pts: rate }, { label: t('ch.loss'), role: 'ref', pts: ref }],
   })
-  // QBER vs Eve (+ theory p + (1−2p)f/4)
   const q = chartData.qber.map((p) => [p.x * 100, p.r.qber * 100])
   const th = chartData.qber.map((p) => [p.x * 100, 100 * (c.noise + (1 - 2 * c.noise) * 0.25 * p.x)])
   renderChart($('chart-qber'), {
@@ -139,7 +188,6 @@ function drawCharts() {
     hline: { y: 11, label: t('ch.limit') },
     series: [{ label: t('ch.sim'), role: 'data', pts: q }, { label: t('ch.theory'), role: 'ref', pts: th }],
   })
-  void lang
 }
 
 function runCharts(cfg) {
@@ -161,51 +209,56 @@ function runCharts(cfg) {
   })).then(() => { chartData.working = { rate: false, qber: false }; drawCharts() })
     .catch((e) => { if (sweepWorker === w) console.error(e) })
 }
+// charts are heavy (≈ 37 simulations): wait until the sliders settle
+const scheduleCharts = debounce((cfg) => runCharts(cfg), 1200)
 
 // ── run ────────────────────────────────────────────────────────────────────
 let runId = 0
-async function simulate() {
+// live = triggered by a slider: fixed seed, so only the parameter changes between
+// runs; the button uses a fresh random seed.
+async function simulate({ live = false } = {}) {
   const id = ++runId
   const cfg = read()
+  const seed = live ? 29 : 0
   const btn = $('run')
-  btn.disabled = true; btn.textContent = t('ctl.running')
-  document.querySelector('.results').classList.add('busy')
+  btn.disabled = true
+  $('results').classList.add('busy')
   try {
-    const res = await simWorker.call({ op: 'sim', cfg: { ...cfg, seed: 0 } })
+    const res = await simWorker.call({ op: 'sim', cfg: { ...cfg, seed } })
     if (id !== runId) return
-    renderResult(res)
-    lastCfg = cfg
+    renderResult(res, cfg)
+    lastCfg = cfg; lastSeed = seed
     await loadTrace()
-    runCharts(cfg)
+    scheduleCharts(cfg)
   } catch (err) {
     console.error(err)
-    $('verdict').hidden = false
-    $('verdict').className = 'verdict bad'
-    $('verdict').innerHTML = `<b>✗ error</b>${esc(err.message)}`
+    $('v-card').className = 'card verdict-card bad'
+    $('v-title').textContent = 'error'
+    $('v-text').textContent = err.message
   } finally {
-    if (id === runId) {
-      btn.disabled = false; btn.textContent = t('ctl.run')
-      document.querySelector('.results').classList.remove('busy')
-    }
+    if (id === runId) { btn.disabled = false; $('results').classList.remove('busy') }
   }
 }
+const liveSimulate = debounce(() => simulate({ live: true }), 250)
 
 // ── boot ───────────────────────────────────────────────────────────────────
 function applyLang(l) {
   setLang(l)
   syncOutputs()
-  $('run').textContent = $('run').disabled ? t('ctl.running') : t('ctl.run')
   if (lastResult) { renderResult(lastResult); renderNote() }
+  engine.photons.forEach((p, i) => engine.slots[i] && table.fill(i, p, false))
+  if (engine.photons.length) $('sift-stats').textContent = t('anim.stats', engine.counts())
   drawCharts()
-  stage?.redraw()
+  hero?.draw(engine)
 }
 
 initLang()
 startSky($('sky'), reduced)
-stage = createStage($('stage'), reduced, animStats)
-$('replay').addEventListener('click', () => stage.replay())
 $('show-lost').addEventListener('change', () => loadTrace().catch(console.error))
 $('controls').addEventListener('submit', (e) => { e.preventDefault(); simulate() })
+for (const id of ['in-distance', 'in-noise', 'in-eve', 'in-photons']) {
+  $(id).addEventListener('input', () => { syncOutputs(); liveSimulate() })
+}
 for (const b of document.querySelectorAll('[data-lang]')) b.addEventListener('click', () => applyLang(b.dataset.lang))
 applyLang(getLang())
-simulate()
+simulate({ live: true })
