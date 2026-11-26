@@ -11,6 +11,7 @@ package protocol
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/fizsar/polaris-qkd/bb84"
 	"github.com/fizsar/polaris-qkd/cascade"
@@ -40,6 +41,7 @@ type Config struct {
 	QBERThreshold  float64 `json:"qber_threshold"`  // abort above this value
 	VerifyBits     int     `json:"verify_bits"`     // length of the verification hash
 	SecurityMargin int     `json:"security_margin"` // bits subtracted per amplification block
+	SigmaMargin    float64 `json:"sigma_margin"`    // z in Q_up = Q + z·σ used for the final length
 	BlockBits      int     `json:"block_bits"`      // privacy-amplification block size (0 = one block)
 	MinSiftedBits  int     `json:"min_sifted_bits"` // abort below this sifted length
 	ClockHz        float64 `json:"clock_hz"`        // pulse rate, only to express a rate per second
@@ -54,6 +56,7 @@ func DefaultConfig() Config {
 		QBERThreshold:  qber.Threshold,
 		VerifyBits:     64,
 		SecurityMargin: 64,
+		SigmaMargin:    3,
 		BlockBits:      1 << 16,
 		MinSiftedBits:  200,
 		ClockHz:        1e9,
@@ -73,7 +76,7 @@ func (c Config) Validate() error {
 		return fmt.Errorf("protocol: sample fraction must be in (0,1), got %v", c.SampleFraction)
 	case !(c.QBERThreshold > 0 && c.QBERThreshold < 0.5):
 		return fmt.Errorf("protocol: QBER threshold must be in (0,0.5), got %v", c.QBERThreshold)
-	case c.VerifyBits < 1 || c.SecurityMargin < 0 || c.BlockBits < 0 || c.MinSiftedBits < 2 || c.ClockHz < 0:
+	case c.VerifyBits < 1 || c.SecurityMargin < 0 || c.BlockBits < 0 || c.MinSiftedBits < 2 || c.ClockHz < 0 || c.SigmaMargin < 0:
 		return fmt.Errorf("protocol: invalid verify bits, margin, block size, minimum length or clock")
 	}
 	return nil
@@ -94,6 +97,7 @@ type Result struct {
 	SampleBits   int     `json:"sample_bits_spent"` // sacrificed for QBER estimation
 	SampleErrors int     `json:"sample_errors"`
 	QBER         float64 `json:"qber"`
+	QBERUpper    float64 `json:"qber_upper"`         // Q + z·σ, used for the final length
 	TrueQBER     float64 `json:"true_qber_sim_only"` // ground truth, only known in a simulation
 
 	ReconciledBits int     `json:"reconciled_bits"` // key length entering Cascade
@@ -155,6 +159,7 @@ func Run(cfg Config, src rng.Source) (Result, error) {
 		return res, err
 	}
 	res.SampleBits, res.SampleErrors, res.QBER = est.SampleBits, est.Errors, est.QBER
+	res.QBERUpper = qber.UpperBound(est.QBER, est.SampleBits, cfg.SigmaMargin)
 	res.ReconciledBits = len(alice)
 	if est.QBER > cfg.QBERThreshold {
 		res.abort(AbortQBERTooHigh,
@@ -164,7 +169,9 @@ func Run(cfg Config, src rng.Source) (Result, error) {
 	}
 
 	// 3. Error correction with Cascade.
-	rec, err := cascade.Reconcile(alice, bob, est.QBER, src)
+	// The first block size comes from the estimate, floored at 1/sample size so
+	// that a small sample with no errors does not pick huge blocks.
+	rec, err := cascade.Reconcile(alice, bob, math.Max(est.QBER, 1/float64(est.SampleBits)), src)
 	if err != nil {
 		return res, err
 	}
@@ -183,13 +190,15 @@ func Run(cfg Config, src rng.Source) (Result, error) {
 		return res, nil
 	}
 
-	// 5. Privacy amplification (asymptotic single-photon bound).
-	plan := privacy.NewPlan(len(alice), est.QBER, rec.Leak+cfg.VerifyBits, cfg.SecurityMargin, cfg.BlockBits, src)
+	// 5. Privacy amplification (asymptotic single-photon bound), evaluated at
+	// the upper QBER bound so that an underestimating sample cannot make the
+	// key longer than is safe.
+	plan := privacy.NewPlan(len(alice), res.QBERUpper, rec.Leak+cfg.VerifyBits, cfg.SecurityMargin, cfg.BlockBits, src)
 	res.AmplificationBlocks = len(plan.Blocks)
 	if plan.OutputBits() == 0 {
 		res.abort(AbortNoSecretKey,
 			"no secret key left: n·(1−h(Q)) = %d does not cover the leak of %d bits plus the margin",
-			int(float64(len(alice))*(1-privacy.H2(est.QBER))), rec.Leak+cfg.VerifyBits)
+			int(float64(len(alice))*(1-privacy.H2(res.QBERUpper))), rec.Leak+cfg.VerifyBits)
 		return res, nil
 	}
 	res.AliceKey = plan.Apply(alice)

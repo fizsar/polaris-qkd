@@ -31,6 +31,22 @@ func TestSampleRemovesAndEstimates(t *testing.T) {
 	}
 }
 
+func TestUpperBound(t *testing.T) {
+	// 0.02 + 3·sqrt(0.02·0.98/5000) = 0.02 + 3·0.0019799 = 0.025940
+	if got := UpperBound(0.02, 5000, 3); math.Abs(got-0.02594) > 1e-5 {
+		t.Errorf("UpperBound = %v, want 0.02594", got)
+	}
+	if got := UpperBound(0, 1000, 3); !(got > 0 && got < 0.1) {
+		t.Errorf("zero errors must still get a positive margin, got %v", got)
+	}
+	if UpperBound(0.49, 10, 3) != 0.5 || UpperBound(0.1, 0, 3) != 0.5 {
+		t.Error("bound must be capped at 0.5")
+	}
+	if UpperBound(0.05, 100, 0) != 0.05 {
+		t.Error("z = 0 must return the estimate")
+	}
+}
+
 func TestSampleErrors(t *testing.T) {
 	src := rng.NewSeeded(2)
 	if _, _, _, err := Sample(make([]uint8, 5), make([]uint8, 6), 0.1, src); err == nil {

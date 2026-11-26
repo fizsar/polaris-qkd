@@ -55,6 +55,55 @@ func TestNoiseQBERAndKeyMatch(t *testing.T) {
 	}
 }
 
+// With default dark counts the expected sifted QBER is
+//
+//	[pP(1−pd)·p + ½·(pP·pd + (1−pP)·pd)] / [pP + pd − pP·pd]
+//
+// (clean click with error p; double click or dark-only click = random bit).
+func TestMeanQBERMatchesNoisePlusDarkCounts(t *testing.T) {
+	const seeds = 20
+	c := DefaultConfig()
+	c.Photons = 1_000_000
+	c.Channel.DistanceKm = 50
+	c.Channel.ErrorRate = 0.02
+	pP, pd, p := c.Channel.PhotonDetectionProb(), c.Channel.DarkClickProb(), 0.02
+	want := (pP*(1-pd)*p + 0.5*(pP*pd+(1-pP)*pd)) / (pP + pd - pP*pd)
+
+	var sum float64
+	var nSifted int
+	for s := uint64(1); s <= seeds; s++ {
+		r := run(t, c, 100+s)
+		sum += r.TrueQBER
+		nSifted += r.Sifted
+	}
+	mean := sum / seeds
+	se := math.Sqrt(want * (1 - want) / float64(nSifted)) // SE of the pooled mean
+	t.Logf("mean true QBER over %d seeds = %.5f; expected %.5f (noise 0.02 + dark counts); SE %.5f", seeds, mean, want, se)
+	if math.Abs(mean-want) > 4*se {
+		t.Errorf("mean QBER %.5f differs from %.5f by more than 4 SE (%.5f)", mean, want, 4*se)
+	}
+	if want < 0.02 || want > 0.0202 {
+		t.Errorf("sanity: dark-count contribution should be tiny here, got expected %.5f", want)
+	}
+}
+
+func TestFinalLengthUsesUpperBound(t *testing.T) {
+	c := cfg(1_000_000, 10, 0.03, 0)
+	r := run(t, c, 12)
+	if !(r.QBERUpper > r.QBER) {
+		t.Fatalf("upper bound %v must exceed the estimate %v", r.QBERUpper, r.QBER)
+	}
+	z := c
+	z.SigmaMargin = 0
+	r0 := run(t, z, 12)
+	if !(r.FinalBits < r0.FinalBits) {
+		t.Errorf("3σ margin must shorten the key: %d vs %d without margin", r.FinalBits, r0.FinalBits)
+	}
+	if !r.KeysMatch {
+		t.Error("keys differ")
+	}
+}
+
 func TestEveTotalAborts(t *testing.T) {
 	r := run(t, cfg(500_000, 5, 0, 1), 3)
 	if !r.Aborted || r.AbortCode != AbortQBERTooHigh {

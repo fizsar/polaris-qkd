@@ -22,6 +22,25 @@ type Estimate struct {
 	QBER       float64 `json:"qber"`
 }
 
+// UpperBound returns the sample QBER plus a statistical safety margin:
+//
+//	Q_up = Q̂ + z·σ,   σ = sqrt(Q̃·(1−Q̃)/n),   Q̃ = max(Q̂, 1/n)
+//
+// with n the sample size and z the number of standard deviations (3 by
+// default in the protocol). Q̃ keeps σ > 0 when the sample shows no errors.
+// This is a normal-approximation margin for the sampling error of the QBER
+// only; it is NOT a rigorous finite-key bound (that needs e.g. a Chernoff or
+// Serfling-type tail bound and a security parameter ε, left for later). The
+// result is capped at 0.5.
+func UpperBound(qhat float64, n int, z float64) float64 {
+	if n <= 0 {
+		return 0.5
+	}
+	qt := math.Max(qhat, 1/float64(n))
+	sigma := math.Sqrt(qt * (1 - qt) / float64(n))
+	return math.Min(qhat+z*sigma, 0.5)
+}
+
 // Sample picks round(fraction·n) random positions (at least 1, at most n-1),
 // compares them, and returns the estimate plus both keys without the sampled
 // positions. The sampled bits are discarded: they were made public.
